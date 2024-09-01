@@ -28,7 +28,7 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', secrets.token_hex(32))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = [ 'fintrackapi.taurai.tech', 'localhost', '127.0.0.1' ]
+ALLOWED_HOSTS = [ 'https://taurai.tech', 'localhost', '127.0.0.1' ]
 
 
 # Application definition
