@@ -2,6 +2,7 @@
 from datetime import datetime
 from django.contrib.auth.models import User
 from django.utils import timezone
+from django.db.utils import IntegrityError
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, viewsets, permissions, status
@@ -11,7 +12,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import date
 import requests
 from django.views.decorators.csrf import csrf_exempt
@@ -109,30 +110,6 @@ class LoginView(generics.GenericAPIView):
         
         return Response({'token': token}, status=status.HTTP_200_OK)
 
-class LogoutView(generics.GenericAPIView):
-    """Logout view."""
-    permission_classes = [permissions.IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-
-    @csrf_exempt
-    def post(self, request):
-        """Logout post method."""
-        try:
-            refresh_token = request.data.get('refresh')
-            if not refresh_token:
-                return Response({'detail': 'Refresh token is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-            return Response({'detail': 'Successfully logged out.'}, status=status.HTTP_205_RESET_CONTENT)
-        except TokenError:
-            # Handle token-specific errors like invalid or already blacklisted tokens
-            return Response({'detail': 'Invalid or expired token.'}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            # Handle any other exceptions
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
 class TransactionViewSet(viewsets.ModelViewSet):
     """Transaction view."""
     queryset = Transaction.objects.none()
@@ -187,22 +164,48 @@ class MonthlyBudgetViewSet(viewsets.ModelViewSet):
         month_str = request.data.get('month')
         budget_amount = request.data.get('budget_amount')
 
+        # Validate that month is provided and in the correct format
+        if not month_str:
+            return Response({'error': 'Month is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             month = datetime.strptime(month_str, '%Y-%m-%d').date()
         except ValueError:
             return Response({'error': 'Invalid month format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Update or create the MonthlyBudget record
-        monthly_budget, created = MonthlyBudget.objects.update_or_create(
-            user=user,
-            month=month,
-            defaults={'budget_amount': budget_amount}
-        )
+        # Validate that budget_amount is provided and is a valid decimal number
+        if budget_amount is None:
+            return Response({'error': 'Budget amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if created:
-            return Response({'message': 'Budget created successfully'}, status=status.HTTP_201_CREATED)
-        else:
-            return Response({'message': 'Budget updated successfully'}, status=status.HTTP_200_OK)
+        try:
+            budget_amount = Decimal(budget_amount)
+            if budget_amount <= 0:
+                raise ValueError
+        except (ValueError, TypeError, InvalidOperation):
+            return Response({'error': 'Budget amount must be a positive number.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if a budget already exists for the same user and month
+        if MonthlyBudget.objects.filter(user=user, month=month).exists():
+            return Response({'error': 'A budget for this month already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create a new budget for the user and month
+        try:
+            monthly_budget = MonthlyBudget.objects.create(
+                user=user,
+                month=month,
+                budget_amount=budget_amount
+            )
+            return Response({'message': 'Budget created successfully', 'budget': {
+                'id': monthly_budget.id,
+                'user': monthly_budget.user.id,
+                'month': monthly_budget.month,
+                'budget_amount': monthly_budget.budget_amount,
+            }}, status=status.HTTP_201_CREATED)
+
+        except IntegrityError:
+            return Response({'error': 'Failed to create the budget. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
     @action(detail=False, methods=['get'])
     def check_budget_status(self, request):
@@ -393,108 +396,6 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         status = "paid" if subscription.is_paid else "unpaid"
         return Response({"status": f"Subscription marked as {status}"})
 
-
-class UserSummaryViewSet(viewsets.ViewSet):
-    """
-    A viewset that provides a summary of user data for charts.
-    """
-
-    def list(self, request):
-        """
-        Provides an overview of the user's financial data for chart rendering.
-        """
-        user = request.user
-    
-        # Get user profile data
-        user_profile = UserProfile.objects.get(user=user)
-        profile_data = UserProfileSerializer(user_profile).data
-    
-        # Calculate total income
-        total_income = Income.objects.filter(user=user).aggregate(Sum('amount'))['amount__sum'] or 0
-    
-        # Calculate total expenses
-        total_expenses = Expense.objects.filter(user=user).aggregate(Sum('amount'))['amount__sum'] or 0
-    
-        # Calculate budget data
-        current_month = date.today().replace(day=1)  # Get the first day of the current month
-        monthly_budget = MonthlyBudget.objects.filter(user=user, month=current_month).first()
-        if monthly_budget:
-            budget_data = {
-                'budget_amount': monthly_budget.budget_amount,
-                'expenditure': monthly_budget.get_expenditure(),
-                'remaining_budget': monthly_budget.get_remaining_budget(),
-                'is_over_budget': monthly_budget.is_over_budget()
-            }
-        else:
-            budget_data = {
-                'budget_amount': 0,
-                'expenditure': 0,
-                'remaining_budget': 0,
-                'is_over_budget': False
-            }
-    
-        # Get savings goal data
-        savings_goal = SavingsGoal.objects.filter(user=user).first()
-        savings_goal_data = SavingsGoalSerializer(savings_goal).data if savings_goal else {}
-    
-        # Get subscription data
-        subscriptions = Subscription.objects.filter(user=user)
-        subscription_data = SubscriptionSerializer(subscriptions, many=True).data
-    
-        # Construct the response data
-        summary_data = {
-            'profile': profile_data,
-            'total_income': total_income,
-            'total_expenses': total_expenses,
-            'budget': budget_data,
-            'savings_goal': savings_goal_data,
-            'subscriptions': subscription_data
-        }
-    
-        return Response(summary_data)
-
-    @action(detail=False, methods=['get'])
-    def chart_data(self, request):
-        """
-        Provides data formatted specifically for charts.
-        This can be extended or adjusted based on the charts you need.
-        """
-        user = request.user
-
-        # Example data structure for charts:
-        income_expense_chart = {
-            'labels': ['Income', 'Expenses'],
-            'data': [
-                Income.objects.filter(user=user).aggregate(Sum('amount'))['amount__sum'] or 0,
-                Expense.objects.filter(user=user).aggregate(Sum('amount'))['amount__sum'] or 0
-            ]
-        }
-        current_month = date.today().replace(day=1)
-        monthly_budget = MonthlyBudget.objects.filter(user=user, month=current_month).first()
-        monthly_budget_chart = {
-            'labels': ['Budget', 'Expenditure', 'Remaining'],
-            'data': [
-                monthly_budget.budget_amount if monthly_budget else 0,
-                monthly_budget.get_expenditure() if monthly_budget else 0,
-                monthly_budget.get_remaining_budget() if monthly_budget else 0
-            ]
-        }
-
-        savings_goal = SavingsGoal.objects.filter(user=user).first()
-        savings_goal_chart = {
-            'labels': ['Goal', 'Current Savings'],
-            'data': [
-                savings_goal.goal_amount if savings_goal else 0,
-                savings_goal.current_savings if savings_goal else 0
-            ]
-        }
-
-        return Response({
-            'income_expense_chart': income_expense_chart,
-            'monthly_budget_chart': monthly_budget_chart,
-            'savings_goal_chart': savings_goal_chart,
-        })
-    
 
 class InsightViewSet(viewsets.ModelViewSet):
     """Insights view."""

@@ -44,6 +44,7 @@ class UserProfile(models.Model):
 
 class Category(models.Model):
     """Model for the category of a transaction."""
+    id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
 
@@ -57,6 +58,7 @@ class Category(models.Model):
 
 class Transaction(models.Model):
     """Model for a transaction."""
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL, null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
@@ -87,6 +89,7 @@ class Expense(Transaction):
 
 class MonthlyBudget(models.Model):
     """Monthly budget model"""
+    id = models.AutoField(primary_key=True)
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     month = models.DateField()
     budget_amount = models.DecimalField(max_digits=10, decimal_places=2)
@@ -116,7 +119,17 @@ class MonthlyBudget(models.Model):
     def get_remaining_budget(self):
         return self.budget_amount - self.get_expenditure()
 
+    @classmethod
+    def create_budget(cls, user, month, budget_amount):
+        """Create a monthly budget for a specific user and month."""
+        budget = cls(user=user, month=month, budget_amount=budget_amount)
+        budget.save()
+        return budget
+
+
 class SavingsGoal(models.Model):
+    """Model for a savings goal."""
+    id = models.AutoField(primary_key=True)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
     goal_amount = models.DecimalField(max_digits=10, decimal_places=2)
     goal_date = models.DateField()
@@ -158,6 +171,7 @@ class SavingsGoal(models.Model):
 
 class Subscription(models.Model):
     """Subscription model."""
+    id = models.AutoField(primary_key=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
