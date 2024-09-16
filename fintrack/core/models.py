@@ -93,6 +93,7 @@ class MonthlyBudget(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     month = models.DateField()
     budget_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ('user', 'month')  # Ensure uniqueness of user-month combination
@@ -101,6 +102,7 @@ class MonthlyBudget(models.Model):
         return f'{self.user.username} - {self.month.strftime("%B %Y")}'
 
     def get_expenditure(self):
+        """Calculate the total expenditure for the month."""
         try:
             expense_category = Category.objects.get(name='Expenses')
         except Category.DoesNotExist:
@@ -114,17 +116,19 @@ class MonthlyBudget(models.Model):
         ).aggregate(total_expenditure=models.Sum('amount'))['total_expenditure'] or 0
 
     def is_over_budget(self):
+        """Check if the user has exceeded the budget amount."""
         return self.get_expenditure() > self.budget_amount
 
     def get_remaining_budget(self):
+        """Calculate the remaining budget amount."""
         return self.budget_amount - self.get_expenditure()
 
-    @classmethod
-    def create_budget(cls, user, month, budget_amount):
-        """Create a monthly budget for a specific user and month."""
-        budget = cls(user=user, month=month, budget_amount=budget_amount)
-        budget.save()
-        return budget
+    # @classmethod
+    # def create_budget(cls, user, month, budget_amount):
+    #     """Create a monthly budget for a specific user and month."""
+    #     budget = cls(user=user, month=month, budget_amount=budget_amount)
+    #     budget.save()
+    #     return budget
 
 
 class SavingsGoal(models.Model):

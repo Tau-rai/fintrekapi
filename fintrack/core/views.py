@@ -12,6 +12,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from decimal import Decimal, InvalidOperation
 from datetime import date
 import requests
@@ -158,52 +159,60 @@ class MonthlyBudgetViewSet(viewsets.ModelViewSet):
             except ValueError:
                 return MonthlyBudget.objects.none()
         return MonthlyBudget.objects.none()
+    
+    def perform_create(self, serializer):
+        # Check if a budget for this user and month already exists
+        month = serializer.validated_data.get('month')
+        if MonthlyBudget.objects.filter(user=self.request.user, month=month).exists():
+            raise ValidationError({"error": "A budget already exists for {user} in {month}"})
+        
+        serializer.save(user=self.request.user)
 
-    def create(self, request, *args, **kwargs):
-        user = request.user
-        month_str = request.data.get('month')
-        budget_amount = request.data.get('budget_amount')
+    # def create(self, request, *args, **kwargs):
+    #     user = request.user
+    #     month_str = request.data.get('month')
+    #     budget_amount = request.data.get('budget_amount')
 
-        # Validate that month is provided and in the correct format
-        if not month_str:
-            return Response({'error': 'Month is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    #     # Validate that month is provided and in the correct format
+    #     if not month_str:
+    #         return Response({'error': 'Month is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            month = datetime.strptime(month_str, '%Y-%m-%d').date()
-        except ValueError:
-            return Response({'error': 'Invalid month format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
+    #     try:
+    #         month = datetime.strptime(month_str, '%Y-%m-%d').date()
+    #     except ValueError:
+    #         return Response({'error': 'Invalid month format. Use YYYY-MM-DD.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate that budget_amount is provided and is a valid decimal number
-        if budget_amount is None:
-            return Response({'error': 'Budget amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
+    #     # Validate that budget_amount is provided and is a valid decimal number
+    #     if budget_amount is None:
+    #         return Response({'error': 'Budget amount is required.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            budget_amount = Decimal(budget_amount)
-            if budget_amount <= 0:
-                raise ValueError
-        except (ValueError, TypeError, InvalidOperation):
-            return Response({'error': 'Budget amount must be a positive number.'}, status=status.HTTP_400_BAD_REQUEST)
+    #     try:
+    #         budget_amount = Decimal(budget_amount)
+    #         if budget_amount <= 0:
+    #             raise ValueError
+    #     except (ValueError, TypeError, InvalidOperation):
+    #         return Response({'error': 'Budget amount must be a positive number.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check if a budget already exists for the same user and month
-        if MonthlyBudget.objects.filter(user=user, month=month).exists():
-            return Response({'error': 'A budget for this month already exists.'}, status=status.HTTP_400_BAD_REQUEST)
+    #     # Check if a budget already exists for the same user and month
+    #     if MonthlyBudget.objects.filter(user=user, month=month).exists():
+    #         return Response({'error': 'A budget for this month already exists.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Create a new budget for the user and month
-        try:
-            monthly_budget = MonthlyBudget.objects.create(
-                user=user,
-                month=month,
-                budget_amount=budget_amount
-            )
-            return Response({'message': 'Budget created successfully', 'budget': {
-                'id': monthly_budget.id,
-                'user': monthly_budget.user.id,
-                'month': monthly_budget.month,
-                'budget_amount': monthly_budget.budget_amount,
-            }}, status=status.HTTP_201_CREATED)
+    #     # Create a new budget for the user and month
+    #     try:
+    #         monthly_budget = MonthlyBudget.objects.create(
+    #             user=user,
+    #             month=month,
+    #             budget_amount=budget_amount
+    #         )
+    #         return Response({'message': 'Budget created successfully', 'budget': {
+    #             'id': monthly_budget.id,
+    #             'user': monthly_budget.user.id,
+    #             'month': monthly_budget.month,
+    #             'budget_amount': monthly_budget.budget_amount,
+    #         }}, status=status.HTTP_201_CREATED)
 
-        except IntegrityError:
-            return Response({'error': 'Failed to create the budget. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    #     except IntegrityError:
+    #         return Response({'error': 'Failed to create the budget. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 
