@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', secrets.token_hex(32))
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 ALLOWED_HOSTS = [ 'api.taurai.tech', 'www.api.taurai.tech', 'taurai.tech', 'www.taurai.tech', 'localhost', '127.0.0.1' ]
 
@@ -125,7 +125,7 @@ SWAGGER_SETTINGS = {
 }
 
 
-ROOT_URLCONF = 'PennyPillar.urls'
+ROOT_URLCONF = 'finpulse.urls'
 
 TEMPLATES = [
     {
@@ -143,7 +143,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'PennyPillar.wsgi.application'
+WSGI_APPLICATION = 'finpulse.wsgi.application'
 
 
 # Database
@@ -151,12 +151,12 @@ WSGI_APPLICATION = 'PennyPillar.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('DB_NAME', 'pennypillar'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '3306'),
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.getenv('PDB_NAME', 'finpulse'),
+        'USER': os.getenv('PSQL_USER'),
+        'PASSWORD': os.getenv('PSQL_UPASSWORD'),
+        'HOST': 'db',
+        'PORT': os.getenv('PSQL_PORT', '5432'),
     }
 }
 

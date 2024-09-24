@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    command: /wait-for-it.sh db:5432 -- sh -c "python manage.py migrate && gunicorn finpulse.wsgi:application --bind 0.0.0.0:8000"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - DEBUG=1
+      - ALLOWED_HOSTS=*
+      - DB_NAME=${PDB_NAME}
+      - DB_USER=${PSQL_USER}
+      - DB_PASSWORD=${PSQL_UPASSWORD}
+      - DB_HOST=db
+
+  db:
+    image: postgres:14
+    environment:
+      POSTGRES_DB: ${PDB_NAME}
+      POSTGRES_USER: ${PSQL_USER}
+      POSTGRES_PASSWORD: ${PSQL_UPASSWORD}
+    volumes:
+      - psql_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+
+volumes:
+  psql_data:

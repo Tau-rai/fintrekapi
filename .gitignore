@@ -5,3 +5,7 @@ fintrek/
 *.sqlite3
 .pytest_cache/
 fintracker/
+*.log
+*.db
+.env
+.vscode/
