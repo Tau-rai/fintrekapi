@@ -411,7 +411,7 @@ class InsightViewSet(viewsets.ModelViewSet):
     queryset = Insight.objects.all().order_by('-date_posted')
     serializer_class = InsightSerializer
     authentication_classes = [JWTAuthentication]
-    permission_classes = [permissions.IsAuthenticated]  # Assuming you want only authenticated users
+    permission_classes = [permissions.IsAuthenticated] 
 
     def list(self, request):
         """List the insights."""

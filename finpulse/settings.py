@@ -152,9 +152,9 @@ WSGI_APPLICATION = 'finpulse.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('PDB_NAME', 'finpulse'),
-        'USER': os.getenv('PSQL_USER'),
-        'PASSWORD': os.getenv('PSQL_UPASSWORD'),
+        'NAME': os.getenv('DB_NAME', 'finpulse'),
+        'USER': os.getenv('DB_USER'),
+        'PASSWORD': os.getenv('DB_PASSWORD'),
         'HOST': 'db',
         'PORT': os.getenv('PSQL_PORT', '5432'),
     }
