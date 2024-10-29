@@ -8,10 +8,8 @@ services:
       - .:/app
     ports:
       - "8000:8000"
-    depends_on:
-      - db
     environment:
-      - DEBUG=1
+      - DEBUG=0
       - ALLOWED_HOSTS=*
       - DB_NAME=${PDB_NAME}
       - DB_USER=${PSQL_USER}
