@@ -24,7 +24,8 @@ from .models import Category, MonthlyBudget, Transaction, SavingsGoal, UserProfi
 from .serializers import (CategorySerializer, LoginSerializer,
                           MonthlyBudgetSerializer, RegisterSerializer,
                           TransactionSerializer, UserProfileSerializer, SavingsGoalSerializer, SubscriptionSerializer, InsightSerializer)
-
+from rest_framework.views import APIView
+from django.core.management import call_command
 
 class UserProfileViewSet(viewsets.ModelViewSet):
     """User profile view."""
@@ -406,15 +407,81 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         return Response({"status": f"Subscription marked as {status}"})
 
 
-class InsightViewSet(viewsets.ModelViewSet):
-    """Insights view."""
-    queryset = Insight.objects.all().order_by('-date_posted')
+# class InsightViewSet(viewsets.ModelViewSet):
+#     """Insights view."""
+#     queryset = Insight.objects.all().order_by('-date_posted')
+#     serializer_class = InsightSerializer
+#     authentication_classes = [JWTAuthentication]
+#     permission_classes = [permissions.IsAuthenticated] 
+
+#     def list(self, request):
+#         """List the insights."""
+#         queryset = self.get_queryset()
+#         serializer = InsightSerializer(queryset, many=True)
+#         return Response(serializer.data)
+
+
+
+class GeneratePersonalInsightView(viewsets.ViewSet):
+    """
+    API View to generate a personalized insight for the current user
+    """
     serializer_class = InsightSerializer
     authentication_classes = [JWTAuthentication]
-    permission_classes = [permissions.IsAuthenticated] 
+    permission_classes = [permissions.IsAuthenticated]
 
+    def create(self, request):
+        try:
+            # Call management command to generate insight for this user
+            call_command('generate_daily_insight', user=request.user.username)
+
+            # Fetch the most recent user insight
+            latest_insight = Insight.objects.filter(
+                user=request.user,
+                is_automated=False
+            ).latest('date_posted')
+
+            # Serialize and return the insight
+            serializer = self.serializer_class(latest_insight)
+            return Response(serializer.data)
+        except Insight.DoesNotExist:
+            return Response({
+                'error': 'No personalized insight could be generated'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+class InsightViewSet(viewsets.ViewSet):
+    """
+    A ViewSet for listing insights for the authenticated user.
+    """
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+    
     def list(self, request):
-        """List the insights."""
-        queryset = self.get_queryset()
-        serializer = InsightSerializer(queryset, many=True)
-        return Response(serializer.data)
+        page_size = min(6, Insight.objects.count())  # Set max page size to 6 or total count if less
+        if page_size == 0:
+            page_size = 1  # Avoid division by zero
+            
+        page = request.query_params.get('page', 1)
+        
+        try:
+            page = int(page)
+        except ValueError:
+            page = 1
+            
+        # Calculate offset and limit
+        offset = (page - 1) * page_size
+        limit = offset + page_size
+        
+        # Fetch paginated insights
+        insights = Insight.objects.order_by('-date_posted')[offset:limit]
+        total_insights = Insight.objects.count()
+        
+        # Serialize insights
+        serializer = InsightSerializer(insights, many=True)
+        
+        return Response({
+            'results': serializer.data,
+            'page': page,
+            'total_pages': (total_insights + page_size - 1) // page_size,
+            'total_items': total_insights
+        })

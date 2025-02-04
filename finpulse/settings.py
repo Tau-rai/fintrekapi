@@ -12,6 +12,8 @@ from pathlib import Path
 import os
 from datetime import timedelta
 import secrets
+import dj_database_url
+from urllib.parse import urlparse
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -26,7 +28,7 @@ SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', secrets.token_hex(32))
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = [ 'api.taurai.tech', 'www.api.taurai.tech', 'taurai.tech', 'www.taurai.tech', 'localhost', '127.0.0.1' ]
+ALLOWED_HOSTS = [ 'db.https://komoimqjktnsernvrjuq.supabase.co', 'api.taurai.tech', 'www.api.taurai.tech', 'taurai.tech', 'www.taurai.tech', 'localhost', '127.0.0.1' ]
 
 
 # Application definition
@@ -94,6 +96,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://taurai.tech",
     "https://pennypillar.taurai.tech",
     "https://fintrackapi.taurai.tech",
+    "http://localhost:8080",
 ]
 CORS_ALLOW_CREDENTIALS = True
 
@@ -103,6 +106,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://taurai.tech',
     'https://fintrackapi.taurai.tech',
     'https://pennypillar.taurai.tech',
+    'http://localhost:8080',
 ]
 
 CORS_ALLOW_HEADERS = [
@@ -149,14 +153,36 @@ WSGI_APPLICATION = 'finpulse.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+
+# DATABASE_URL = os.environ.get('DATABASE_URL')
+
+# if DATABASE_URL:
+#     url = urlparse(DATABASE_URL)
+#     DATABASES = {
+#         'default': {
+#             'ENGINE': 'django.db.backends.postgresql',
+#             'NAME': url.path[1:],  # Skip leading '/'
+#             'USER': url.username,
+#             'PASSWORD': url.password,  # Ensure this is set
+#             'HOST': url.hostname,
+#             'PORT': url.port,
+#             'OPTIONS': {
+#                 'sslmode': 'prefer',  # Enable SSL connection
+#             },
+#         }
+#     }
+# else:
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'finpulse'),
-        'USER': os.getenv('DB_USER'),
-        'PASSWORD': os.getenv('DB_PASSWORD'),
-        'HOST': 'db',
-        'PORT': os.getenv('PSQL_PORT', '5432'),
+        'NAME': os.environ.get('DB_NAME'),
+        'USER': os.environ.get('DB_USER'),
+        'PASSWORD': os.environ.get('DB_PASSWORD'),  # Ensure this is set
+        'HOST': 'localhost',
+        'PORT': '5432',  # Default PostgreSQL port
+        'OPTIONS': {
+            'sslmode': 'require',  # Enable SSL connection
+        },
     }
 }
 

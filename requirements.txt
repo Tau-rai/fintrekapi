@@ -45,7 +45,6 @@ platformdirs==4.3.4
 prompt_toolkit==3.0.47
 proto-plus==1.24.0
 protobuf==4.25.4
-psycopg2==2.9.9
 pyasn1==0.6.0
 pyasn1_modules==0.4.0
 pydantic==2.8.2

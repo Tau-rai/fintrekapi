@@ -9,6 +9,9 @@ from datetime import datetime
 from decimal import Decimal
 import requests
 from django.core.files.base import ContentFile
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 class UserProfile(models.Model):
@@ -199,10 +202,33 @@ class Subscription(models.Model):
 
 
 class Insight(models.Model):
-    """Insights model."""
+    """
+    Model to store financial insights for users
+    """
     title = models.CharField(max_length=200)
     content = models.TextField()
-    date_posted = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey(
+        User, 
+        on_delete=models.CASCADE, 
+        related_name='insights',
+        null=True,  # Allow null for existing automated insights
+        blank=True
+    )
+    date_posted = models.DateTimeField(default=timezone.now)
+    is_automated = models.BooleanField(default=True)
+    
+    # Optional: Add a method to format content for frontend
+    def formatted_content(self):
+        """
+        Convert content to HTML for better readability
+        """
+        import markdown
+        return markdown.markdown(self.content)
 
     def __str__(self):
-        return self.title
+        return f"{self.title} - {'Automated' if self.is_automated else 'User-Requested'}"
+
+    class Meta:
+        ordering = ['-date_posted']
+        verbose_name = 'Financial Insight'
+        verbose_name_plural = 'Financial Insights'

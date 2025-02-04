@@ -5,7 +5,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib.auth.views import LogoutView
 from .views import (
-    TransactionViewSet, CategoryViewSet, RegisterView, LoginView, UserProfileViewSet, MonthlyBudgetViewSet, SavingsGoalViewSet, SubscriptionViewSet, InsightViewSet
+    TransactionViewSet, CategoryViewSet, RegisterView, LoginView, UserProfileViewSet, MonthlyBudgetViewSet, SavingsGoalViewSet, SubscriptionViewSet, GeneratePersonalInsightView, InsightViewSet
 )
 
 router = DefaultRouter()
@@ -15,7 +15,10 @@ router.register(r'monthly-budget', MonthlyBudgetViewSet, basename='monthlybudget
 router.register(r'profile', UserProfileViewSet, basename='userprofile')
 router.register(r'savings-goal', SavingsGoalViewSet, basename='savingsgoal')
 router.register(r'subscriptions', SubscriptionViewSet)
-router.register(r'insights', InsightViewSet)
+router.register(r'insights', InsightViewSet, basename='insights')
+router.register(r'generate-insight', GeneratePersonalInsightView, basename='generate-insight')
+
+   
 
 urlpatterns = [
     path('', include(router.urls)),

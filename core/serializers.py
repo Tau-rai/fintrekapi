@@ -188,16 +188,35 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'user']
 
 
+
 class InsightSerializer(serializers.ModelSerializer):
     """Insights serializer with Markdown to HTML conversion."""
     
-    # Add a field for the formatted HTML content
+    # Add fields for formatted content and additional metadata
     formatted_content = serializers.SerializerMethodField()
+    is_automated = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Insight
-        fields = ['title', 'content', 'formatted_content', 'date_posted']
+        fields = [
+            'id',  
+            'title', 
+            'content', 
+            'formatted_content', 
+            'date_posted',
+            'is_automated'
+        ]
 
     def get_formatted_content(self, obj):
-        """Convert Markdown content to HTML."""
-        return markdown2.markdown(obj.content)
+        """
+        Convert Markdown content to HTML.
+        Fallback to built-in method if available.
+        """
+        # First, check if the model has a method
+        if hasattr(obj, 'formatted_content'):
+            return obj.formatted_content()
+        
+        # If not, use markdown2 directly
+        return markdown2.markdown(obj.content) if obj.content else ''
+
+       
