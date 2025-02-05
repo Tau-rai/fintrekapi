@@ -26,7 +26,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', secrets.token_hex(32))
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'False') == 'True'
+DEBUG = 'True'
+#os.getenv('DEBUG', 'False') ==
 
 ALLOWED_HOSTS = [ 'db.https://komoimqjktnsernvrjuq.supabase.co', 'api.taurai.tech', 'www.api.taurai.tech', 'taurai.tech', 'www.taurai.tech', 'localhost', '127.0.0.1' ]
 
@@ -128,6 +129,15 @@ SWAGGER_SETTINGS = {
     'USE_SESSION_AUTH': True,
 }
 
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",  # Update with your Redis instance details
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
 
 ROOT_URLCONF = 'finpulse.urls'
 
@@ -232,3 +242,15 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+
+# Scheduler settings
+SCHEDULER_AUTOSTART = True
+SCHEDULER_RUN_EVERY_MINS = 3600
+SCHEDULER_TIMEZONE = 'UTC'
+
+# settings.py
+import os
+
+CURRENCY_API_KEY = os.getenv('CURRENCY_API_KEY')
+CURRENCY_API_HOST = os.getenv('CURRENCY_API_HOST')

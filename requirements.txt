@@ -13,10 +13,12 @@ click-didyoumean==0.3.1
 click-plugins==1.1.1
 click-repl==0.3.0
 dill==0.3.8
+dj-database-url==2.3.0
 Django==5.1
 django-apscheduler==0.6.2
 django-cors-headers==4.4.0
 django-filter==24.3
+django-redis==5.4.0
 django-rest-framework==0.1.0
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.3.1
@@ -45,6 +47,7 @@ platformdirs==4.3.4
 prompt_toolkit==3.0.47
 proto-plus==1.24.0
 protobuf==4.25.4
+psycopg2-binary==2.9.10
 pyasn1==0.6.0
 pyasn1_modules==0.4.0
 pydantic==2.8.2
@@ -57,8 +60,10 @@ pyparsing==3.1.2
 python-dateutil==2.9.0.post0
 pytz==2024.1
 PyYAML==6.0.2
+redis==5.2.1
 requests==2.32.3
 rsa==4.9
+setuptools==75.8.0
 six==1.16.0
 sqlparse==0.5.1
 tomli==2.0.1
@@ -71,3 +76,4 @@ uritemplate==4.1.1
 urllib3==2.2.2
 vine==5.1.0
 wcwidth==0.2.13
+wheel==0.45.1

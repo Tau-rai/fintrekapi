@@ -7,6 +7,7 @@ from django.db.models import Sum
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, viewsets, permissions, status
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework.decorators import action
@@ -24,8 +25,12 @@ from .models import Category, MonthlyBudget, Transaction, SavingsGoal, UserProfi
 from .serializers import (CategorySerializer, LoginSerializer,
                           MonthlyBudgetSerializer, RegisterSerializer,
                           TransactionSerializer, UserProfileSerializer, SavingsGoalSerializer, SubscriptionSerializer, InsightSerializer)
-from rest_framework.views import APIView
 from django.core.management import call_command
+from django.core.cache import cache
+from django.http import JsonResponse
+from django.conf import settings
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+
 
 class UserProfileViewSet(viewsets.ModelViewSet):
     """User profile view."""
@@ -37,14 +42,21 @@ class UserProfileViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Filter user profile by the current user."""
-        return UserProfile.objects.filter(user=self.request.user)
+        user_id = self.request.user.id
+        cache_key = f"user_profile_{user_id}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return [cached_data]
+        queryset = UserProfile.objects.filter(user=self.request.user)
+        if queryset.exists():
+            cache.set(cache_key, queryset.first(), timeout=3600)  # Cache for 1 hour
+        return queryset
 
     def update(self, request, *args, **kwargs):
         """Handle profile updates."""
         user_profile = self.get_object()
         serializer = self.get_serializer(user_profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        self.perform_update(serializer)
 
         # Update the User model fields if needed
         user = user_profile.user
@@ -53,12 +65,15 @@ class UserProfileViewSet(viewsets.ModelViewSet):
         user.save()
 
         # Handle placeholder logic if the image field is empty
-        if not user_profile.image and not request.data.get('profile_picture'):  # Ensure key matches
-            placeholder_url = 'https://via.placeholder.com/150'
+        if not user_profile.image and not request.data.get('profile_picture'):
+            placeholder_url = 'https://picsum.photos/150'
             response = requests.get(placeholder_url)
             if response.status_code == 200:
                 user_profile.image.save('placeholder.jpg', ContentFile(response.content), save=False)
-                user_profile.save()
+
+        # Save and invalidate cache
+        user_profile.save()
+        cache.delete(f"user_profile_{user_profile.user.id}")
 
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -74,22 +89,34 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
 
     def perform_create(self, serializer):
-        """User registration."""
-        user = serializer.save()
+        """User registration with password hashing and profile creation."""
+        user = serializer.save()  # Save the user instance
         password = self.request.data.get('password')
-        user.set_password(password)
+        user.set_password(password)  # Set and hash the password
         user.save()
 
+        # Create a UserProfile for the newly registered user
+        UserProfile.objects.create(
+            user=user,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            email=user.email,
+            username=user.username
+        )
+
     def create(self, request, *args, **kwargs):
-        """Handle user registration and token generation."""
+        """Handle user registration, token generation, and profile creation."""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        
+
+        # Perform the actual creation of the user and profile
+        self.perform_create(serializer)
+
         # Generate a token for the registered user
+        user = serializer.instance
         refresh = RefreshToken.for_user(user)
         token = str(refresh.access_token)
-        
+
         # Return user data and token
         return Response({
             'user': RegisterSerializer(user).data,
@@ -99,48 +126,146 @@ class RegisterView(generics.CreateAPIView):
 
 class LoginView(generics.GenericAPIView):
     """Login view."""
-    serializer_class = LoginSerializer
+    serializer_class = TokenObtainPairSerializer
     permission_classes = [AllowAny]
 
     def post(self, request, *args, **kwargs):
         """Login post method."""
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        validated_data = serializer.validated_data
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as e:
+            raise ValidationError({"detail": "Invalid credentials."})
 
-        token = validated_data.get('token')
-        
-        return Response({'token': token}, status=status.HTTP_200_OK)
+        # Extract the token from the validated data
+        token_data = serializer.validated_data
+        return Response({'token': token_data['access']}, status=status.HTTP_200_OK)
+
 
 class TransactionViewSet(viewsets.ModelViewSet):
     """Transaction view."""
-    queryset = Transaction.objects.none()
     serializer_class = TransactionSerializer
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
-        """Filter transactions by the current user."""
         user = self.request.user
-        if user.is_authenticated:
-            return Transaction.objects.filter(user=user)
-        return Transaction.objects.none()
+        if not user.is_authenticated:
+            return Transaction.objects.none()
 
-    def perform_create(self, serializer):
-        """Set the user field"""
-        serializer.save(user=self.request.user)
+        # Generate a cache key based on user ID and optional filters
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+        category_id = self.request.query_params.get('category')
+        cache_key = f"transactions_{user.id}_{start_date}_{end_date}_{category_id}"
 
+        # Check if the result is cached
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return cached_data
+
+        # Query the database if not cached
+        queryset = Transaction.objects.filter(user=user)
+        if start_date:
+            queryset = queryset.filter(date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(date__lte=end_date)
+        if category_id:
+            queryset = queryset.filter(category_id=category_id)
+
+        # Cache the result for 1 hour
+        cache.set(cache_key, list(queryset), timeout=3600)
+        return queryset
+
+def perform_create(self, serializer):
+    """Set the user field and invalidate related caches."""
+    user = self.request.user
+    serializer.save(user=user)
+
+    # Invalidate caches for this user
+    cache.delete(f"transactions_{user.id}")
+    cache.delete(f"transaction_summary_{user.id}")
+
+def perform_update(self, serializer):
+    """Invalidate caches after updating a transaction."""
+    user = self.request.user
+    serializer.save()
+
+    # Invalidate caches for this user
+    cache.delete(f"transactions_{user.id}")
+    cache.delete(f"transaction_summary_{user.id}")
+
+def perform_destroy(self, instance):
+    """Invalidate caches after deleting a transaction."""
+    user = instance.user
+    instance.delete()
+
+    # Invalidate caches for this user
+    cache.delete(f"transactions_{user.id}")
+    cache.delete(f"transaction_summary_{user.id}")
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        user = request.user
+        if not user.is_authenticated:
+            return Response({"detail": "Authentication required."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        cache_key = f"transaction_summary_{user.id}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data, status=status.HTTP_200_OK)
+
+        # Calculate summary data
+        incomes = Transaction.objects.filter(user=user, amount__gt=0).aggregate(total=Sum('amount'))['total'] or 0
+        expenses = Transaction.objects.filter(user=user, amount__lt=0).aggregate(total=Sum('amount'))['total'] or 0
+
+        top_categories = (
+            Transaction.objects
+            .filter(user=user, amount__lt=0)
+            .values('category__name')
+            .annotate(total_spent=Sum('amount'))
+            .order_by('-total_spent')[:5]  # Top 5 categories
+        )
+
+        data = {
+            "incomes": str(incomes),
+            "expenses": str(-expenses),
+            "top_categories": [
+                {"category": item['category__name'], "total_spent": str(-item['total_spent'])}
+                for item in top_categories
+            ],
+        }
+
+        # Cache the result for 1 hour
+        cache.set(cache_key, data, timeout=3600)
+        return Response(data, status=status.HTTP_200_OK)
 
 class CategoryViewSet(viewsets.ModelViewSet):
     """Category view."""
-    queryset = Category.objects.all()
     serializer_class = CategorySerializer
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    def get_queryset(self):
+        """Filter categories by the current user."""
+        user = self.request.user
+        if not user.is_authenticated:
+            return Category.objects.none()
+
+        return Category.objects.filter(user=user)
+
     def perform_create(self, serializer):
-        """Set the user field."""
+        """Set the user field when creating a new category."""
         serializer.save(user=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        """Ensure only the owner can delete a category."""
+        instance = self.get_object()
+        if instance.user != request.user:
+            return Response({"detail": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
+
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MonthlyBudgetViewSet(viewsets.ModelViewSet):
@@ -152,22 +277,60 @@ class MonthlyBudgetViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated:
-            month_str = self.request.query_params.get('month', timezone.now().date().replace(day=1).strftime('%Y-%m-%d'))
-            try:
-                month = datetime.strptime(month_str, '%Y-%m-%d').date().replace(day=1)
-                return MonthlyBudget.objects.filter(user=user, month__year=month.year, month__month=month.month)
-            except ValueError:
-                return MonthlyBudget.objects.none()
-        return MonthlyBudget.objects.none()
-    
+        if not user.is_authenticated:
+            return MonthlyBudget.objects.none()
+
+        month_str = self.request.query_params.get('month', timezone.now().date().replace(day=1).strftime('%Y-%m-%d'))
+        try:
+            month = datetime.strptime(month_str, '%Y-%m-%d').date().replace(day=1)
+            cache_key = f"monthly_budget_{user.id}_{month.strftime('%Y-%m')}"
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return [cached_data]
+            queryset = MonthlyBudget.objects.filter(user=user, month__year=month.year, month__month=month.month)
+            if queryset.exists():
+                cache.set(cache_key, queryset.first(), timeout=3600)  # Cache for 1 hour
+            return queryset
+        except ValueError:
+            return MonthlyBudget.objects.none()
+
     def perform_create(self, serializer):
-        # Check if a budget for this user and month already exists
+        """Check if a budget for this user and month already exists."""
         month = serializer.validated_data.get('month')
         if MonthlyBudget.objects.filter(user=self.request.user, month=month).exists():
-            raise ValidationError({"error": "A budget already exists for {user} in {month}"})
-        
+            raise ValidationError({"error": "A budget already exists for this month."})
         serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def check_budget_status(self, request):
+        """Check the budget status for the current month."""
+        user = request.user
+        month_str = request.query_params.get('month', timezone.now().date().replace(day=1).strftime('%Y-%m-%d'))
+
+        try:
+            month = datetime.strptime(month_str, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'detail': 'Invalid month format.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cache_key = f"budget_status_{user.id}_{month.strftime('%Y-%m')}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data, status=status.HTTP_200_OK)
+
+        budget = MonthlyBudget.objects.filter(user=user, month__year=month.year, month__month=month.month).first()
+        if not budget:
+            return Response({'detail': 'Budget not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        data = {
+            'budget_amount': str(budget.budget_amount),
+            'expenditure': str(budget.get_expenditure()),
+            'is_over_budget': budget.is_over_budget(),
+            'remaining_budget': budget.get_remaining_budget(),
+        }
+
+        # Cache the result for 1 hour
+        cache.set(cache_key, data, timeout=3600)
+        return Response(data, status=status.HTTP_200_OK)
 
     # def create(self, request, *args, **kwargs):
     #     user = request.user
@@ -216,41 +379,24 @@ class MonthlyBudgetViewSet(viewsets.ModelViewSet):
     #         return Response({'error': 'Failed to create the budget. Please try again.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-
-    @action(detail=False, methods=['get'])
-    def check_budget_status(self, request):
-        """Check the budget status for the current month."""
-        user = request.user
-        month_str = request.query_params.get('month', timezone.now().date().replace(day=1).strftime('%Y-%m-%d'))
-        try:
-            month = datetime.strptime(month_str, '%Y-%m-%d').date()
-        except ValueError:
-            return Response({'detail': 'Invalid month format.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        budget = MonthlyBudget.objects.filter(user=user, month__year=month.year, month__month=month.month).first()
-
-        if budget:
-            data = {
-                'budget_amount': str(budget.budget_amount),
-                'expenditure': str(budget.get_expenditure()),
-                'is_over_budget': budget.is_over_budget(),
-                'remaining_budget': budget.get_remaining_budget()
-            }
-            return Response(data, status=status.HTTP_200_OK)
-        return Response({'detail': 'Budget not found.'}, status=status.HTTP_404_NOT_FOUND)
-
 class SavingsGoalViewSet(viewsets.ModelViewSet):
     """Savings goal view."""
-    queryset = SavingsGoal.objects.all()  
+    queryset = SavingsGoal.objects.all()
     serializer_class = SavingsGoalSerializer
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
-        """Filter savings goals by the current user."""
         user = self.request.user
         if user.is_authenticated:
-            return SavingsGoal.objects.filter(user=user)
+            cache_key = f"savings_goal_{user.id}"
+            cached_data = cache.get(cache_key)
+            if cached_data:
+                return [cached_data]
+            queryset = SavingsGoal.objects.filter(user=user)
+            if queryset.exists():
+                cache.set(cache_key, queryset.first(), timeout=3600)  # Cache for 1 hour
+            return queryset
         return SavingsGoal.objects.none()
 
     def perform_create(self, serializer):
@@ -259,54 +405,19 @@ class SavingsGoalViewSet(viewsets.ModelViewSet):
         goal_date = serializer.validated_data['goal_date']
 
         try:
-            # Check if the user already has an active SavingsGoal
             savings_goal = user.savingsgoal
-            # Update the existing goal
             savings_goal.goal_amount = goal_amount
             savings_goal.goal_date = goal_date
             savings_goal.save()
         except SavingsGoal.DoesNotExist:
-            # Create a new SavingsGoal if it doesn't exist
             savings_goal = SavingsGoal.objects.create(
                 user=user,
                 goal_amount=goal_amount,
                 goal_date=goal_date,
             )
 
-        # Return the saved goal instance through the serializer
+        cache.delete(f"savings_goal_{user.id}")
         return savings_goal
-
-    @action(detail=False, methods=['post'])
-    def add_amount(self, request):
-        """Update the savings goal amount with the current date."""
-        goal_amount = request.data.get('goal_amount', None)
-
-        if goal_amount is None:
-            return Response({'detail': 'Goal amount not provided.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            goal_amount = Decimal(goal_amount)
-        except (ValueError, TypeError):
-            return Response({'detail': 'Invalid goal amount format.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if goal_amount <= 0:
-            return Response({'detail': 'Goal amount must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Get the current date
-        goal_date = timezone.now().date()
-
-        try:
-            goal = self.get_queryset().get()
-        except SavingsGoal.DoesNotExist:
-            return Response({'detail': 'Savings goal not found.'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Update the goal_amount and set the goal_date to the current date
-        goal.goal_amount = goal_amount
-        goal.goal_date = goal_date
-        goal.save()
-
-        serializer = self.get_serializer(goal)
-        return Response(serializer.data, status=status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
     def add_savings(self, request):
@@ -318,7 +429,6 @@ class SavingsGoalViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'Goal has already been reached.'}, status=status.HTTP_400_BAD_REQUEST)
 
         savings_amount = request.data.get('savings_amount', None)
-
         if savings_amount is None:
             return Response({'detail': 'Savings amount not provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -330,35 +440,18 @@ class SavingsGoalViewSet(viewsets.ModelViewSet):
         if savings_amount <= 0:
             return Response({'detail': 'Savings amount must be greater than zero.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Calculate remaining amount to reach the goal
-        remaining_amount = goal.get_remaining_amount()
-
-        # Add savings amount to current savings
         goal.current_savings += savings_amount
         goal.save()
 
+        cache.delete(f"savings_goal_{user.id}")
         if goal.is_goal_reached():
             return Response({'detail': 'Congratulations! Goal reached and exceeded!'}, status=status.HTTP_200_OK)
         else:
             return Response({'detail': 'Savings added successfully.'}, status=status.HTTP_200_OK)
 
 
-    @action(detail=False, methods=['get'])
-    def check_goal_status(self, request):
-        """Check the status of the savings goal."""
-        goal = get_object_or_404(SavingsGoal, user=request.user)
-        data = {
-            'goal_amount': str(goal.goal_amount),
-            'current_savings': str(goal.current_savings),
-            'goal_date': goal.goal_date,
-            'is_goal_reached': goal.is_goal_reached(),
-            'remaining_amount': str(goal.get_remaining_amount()),
-        }
-        return Response(data, status=status.HTTP_200_OK)
-
 class SubscriptionViewSet(viewsets.ModelViewSet):
     """Subscription view."""
-    queryset = Subscription.objects.none()
     serializer_class = SubscriptionSerializer
     permission_classes = [permissions.IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -368,7 +461,8 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             return Subscription.objects.none()
-        queryset = Subscription.objects.filter(user=self.request.user)
+
+        queryset = Subscription.objects.filter(user=user)
 
         # Get the month and year from query parameters
         month = self.request.query_params.get('month')
@@ -379,13 +473,12 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
                 # Convert month and year to integers
                 month = int(month)
                 year = int(year)
-
                 # Filter the subscriptions based on month and year
                 queryset = queryset.filter(due_date__month=month, due_date__year=year)
-            except ValueError:
-                # Handle the case where month or year is not a valid integer
-                queryset = Subscription.objects.none()
-                
+            except (ValueError, TypeError):
+                # Handle invalid month or year values
+                return Subscription.objects.none()
+
         return queryset
 
     def perform_create(self, serializer):
@@ -396,31 +489,21 @@ class SubscriptionViewSet(viewsets.ModelViewSet):
     def mark_as_paid(self, request, pk=None):
         """Toggle the subscription's paid status."""
         subscription = self.get_object()
+
+        # Ensure the user can only modify their own subscriptions
         if subscription.user != request.user:
-            return Response({"detail": "Not authorized"}, status=403)
+            return Response({"detail": "Not authorized"}, status=status.HTTP_403_FORBIDDEN)
 
         # Toggle the `is_paid` status
         subscription.is_paid = not subscription.is_paid
-        subscription.save()
+        subscription.save(update_fields=['is_paid'])
 
-        status = "paid" if subscription.is_paid else "unpaid"
-        return Response({"status": f"Subscription marked as {status}"})
+        # Log the update timestamp
+        subscription.updated_at = timezone.now()
+        subscription.save(update_fields=['updated_at'])
 
-
-# class InsightViewSet(viewsets.ModelViewSet):
-#     """Insights view."""
-#     queryset = Insight.objects.all().order_by('-date_posted')
-#     serializer_class = InsightSerializer
-#     authentication_classes = [JWTAuthentication]
-#     permission_classes = [permissions.IsAuthenticated] 
-
-#     def list(self, request):
-#         """List the insights."""
-#         queryset = self.get_queryset()
-#         serializer = InsightSerializer(queryset, many=True)
-#         return Response(serializer.data)
-
-
+        status_message = "paid" if subscription.is_paid else "unpaid"
+        return Response({"status": f"Subscription marked as {status_message}"}, status=status.HTTP_200_OK)
 
 class GeneratePersonalInsightView(viewsets.ViewSet):
     """
@@ -455,33 +538,62 @@ class InsightViewSet(viewsets.ViewSet):
     """
     authentication_classes = [JWTAuthentication]
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def list(self, request):
         page_size = min(6, Insight.objects.count())  # Set max page size to 6 or total count if less
         if page_size == 0:
             page_size = 1  # Avoid division by zero
-            
+
         page = request.query_params.get('page', 1)
-        
         try:
             page = int(page)
         except ValueError:
             page = 1
-            
-        # Calculate offset and limit
+
         offset = (page - 1) * page_size
         limit = offset + page_size
-        
-        # Fetch paginated insights
+
+        cache_key = f"insights_{request.user.id}_page_{page}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+
         insights = Insight.objects.order_by('-date_posted')[offset:limit]
         total_insights = Insight.objects.count()
-        
-        # Serialize insights
+
         serializer = InsightSerializer(insights, many=True)
-        
-        return Response({
+        response_data = {
             'results': serializer.data,
             'page': page,
             'total_pages': (total_insights + page_size - 1) // page_size,
-            'total_items': total_insights
-        })
+            'total_items': total_insights,
+        }
+
+        # Cache the response for 1 hour
+        cache.set(cache_key, response_data, timeout=3600)
+        return Response(response_data)
+
+
+@api_view(['GET'])
+@authentication_classes([JWTAuthentication])
+@permission_classes([permissions.IsAuthenticated])
+def get_exchange_rate(request):
+    from_currency = request.GET.get('from_currency', 'USD')  # Default to USD
+    api_key = settings.CURRENCY_API_KEY
+    api_host = settings.CURRENCY_API_HOST
+
+    url = f"https://{api_host}/api/v1/convert-rates/fiat/from?detailed=false&currency={from_currency}"
+
+    headers = {
+        'x-rapidapi-key': api_key,
+        'x-rapidapi-host': api_host,
+    }
+
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # Raise an exception for HTTP errors
+        data = response.json()
+        return Response(data)
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching exchange rate: {e}")  # Log the error
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
